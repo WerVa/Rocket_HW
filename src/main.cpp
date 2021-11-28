@@ -31,9 +31,11 @@ void setup()
 {
 
     Serial.begin(115200);
+    // SET 22 PIN AS GND
     pinMode(22,OUTPUT);
     digitalWrite(22,LOW);
-    Wire.begin();
+    // I2C Config to reading data from GY-91
+    Wire.begin(23,19);
     delay(2000);
     mpu.setup(0x68);  // change to your own address
 
@@ -66,4 +68,6 @@ void loop()
         Serial.print(mpu.getPitch()); Serial.print(", ");
         Serial.println(mpu.getRoll());
     }
+    else
+        Serial.println("Problem with MPU9250");
 }
