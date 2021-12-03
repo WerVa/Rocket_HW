@@ -2,72 +2,216 @@
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
-#include <MPU9250.h>
+#include <MPU9250_asukiaaa.h>
+#include <Adafruit_BMP280.h>
+#include <SPI.h>
+#include <SD.h>
+#include <FS.h>
+#include <Battery18650Stats.h>
 
-#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-MPU9250 mpu;
+// Battery DEFINE
+#define ADC_PIN 36
 
-class MyCallbacks: public BLECharacteristicCallbacks
-{
-    void onWrite(BLECharacteristic *pCharacteristic)
-    {
-        std::string value = pCharacteristic->getValue();
+// I2C DEFINE
+#define SDA_PIN 23
+#define SCL_PIN 19
+// SPI DEFINE SD CARD
+#define MISO_PIN 27
+#define MOSI_PIN 25
+#define CS_PIN 5
+#define SCK_PIN 18
 
-        if (value.length() > 0)
-        {
-            Serial.print("New value: ");
-            for (int i = 0; i < value.length(); i++)
-            {
-                Serial.print(value[i]);
+//BLE DEFINE
+#define serviceID BLEUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
+BLECharacteristic customCharacteristic(
+        BLEUUID("beb5483e-36e1-4688-b7f5-ea07361b26a8"),
+        BLECharacteristic::PROPERTY_READ |
+        BLECharacteristic::PROPERTY_WRITE |
+        BLECharacteristic::PROPERTY_NOTIFY
+);
+bool deviceConnected = false;
+bool sdCardConnected = false;
+//SDCARD
+File myFile;
+//BATTERY
+Battery18650Stats battery(ADC_PIN);
+//I2C device found at address 0x68 - mpu9250
+MPU9250_asukiaaa mySensor;
+float aX, aY, aZ, aSqrt, gX, gY, gZ, mDirection, mX, mY, mZ, temp, press, latt, batt;
+//I2C device found at address 0x76 - bmp280
+Adafruit_BMP280 bmp;
+
+//Build-in Hall sensor
+char value[1024] = "Default";
+
+//Sending Data
+class ServerCallbacks : public BLEServerCallbacks {
+    void onConnect(BLEServer *MyServer) {
+        deviceConnected = true;
+    };
+
+    void onDisconnect(BLEServer *MyServer) {
+        deviceConnected = false;
+    }
+};
+
+//Receiving data
+class MyCharacteristicCallbacks : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *customCharacteristic) {
+        std::string rcvString = customCharacteristic->getValue();
+        if (rcvString.length() > 0) {
+            for (int i = 0; i < rcvString.length(); ++i) {
+                Serial.print(rcvString[i]);
+                value[i] = rcvString[i];
             }
-            Serial.println();
-
+            for (int i = rcvString.length(); i < 50; ++i) {
+                value[i] = 0;
+            }
+            customCharacteristic->setValue((char *) &value);
+        } else {
+            Serial.println("Empty Value Received!");
         }
     }
 };
 
-void setup()
-{
+//Write to the SD card
+void writeFile(fs::FS &fs, const char *path, const char *message) {
+    Serial.printf("Writing file: %s\n", path);
 
-    Serial.begin(115200);
-    // SET 22 PIN AS GND
-    pinMode(22,OUTPUT);
-    digitalWrite(22,LOW);
-    // I2C Config to reading data from GY-91
-    Wire.begin(23,19);
-    delay(2000);
-    mpu.setup(0x68);  // change to your own address
-
-
-    BLEDevice::init("ROCKET_PUT");
-    BLEServer *pServer = BLEDevice::createServer();
-
-    BLEService *pService = pServer->createService(SERVICE_UUID);
-
-    BLECharacteristic *pCharacteristic = pService->createCharacteristic(
-            CHARACTERISTIC_UUID,
-            BLECharacteristic::PROPERTY_READ |
-            BLECharacteristic::PROPERTY_WRITE
-    );
-
-    pCharacteristic->setCallbacks(new MyCallbacks());
-
-    pCharacteristic->setValue("Hello World");
-    pService->start();
-
-    BLEAdvertising *pAdvertising = pServer->getAdvertising();
-    pAdvertising->start();
+    File file = fs.open(path, FILE_WRITE);
+    if (!file) {
+        Serial.println("Failed to open file for writing");
+        return;
+    }
+    if (file.print(message)) {
+        Serial.println("File written");
+    } else {
+        Serial.println("Write failed");
+    }
+    file.close();
 }
 
-void loop()
-{
-    delay(2000);
-    if (mpu.update()) {
-        Serial.print(mpu.getYaw()); Serial.print(", ");
-        Serial.print(mpu.getPitch()); Serial.print(", ");
-        Serial.println(mpu.getRoll());
+//Delete files from SD card
+void deleteFile(fs::FS &fs, const char *path) {
+    Serial.printf("Deleting file: %s\n", path);
+    if (fs.remove(path)) {
+        Serial.println("File deleted");
+    } else {
+        Serial.println("Delete failed");
     }
-    else
-        Serial.println("Problem with MPU9250");
+}
+
+void setup() {
+    //USE PIN 22 as GND
+    pinMode(22, OUTPUT);
+    digitalWrite(22, LOW);
+
+    //Serial RUN for TESTING
+    Serial.begin(115200);
+
+    //I2C RUN
+    Wire.begin(SDA_PIN, SCL_PIN);
+    mySensor.setWire(&Wire);
+
+    //SPI RUN SD CARD
+    SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, CS_PIN);
+    if (!SD.begin(CS_PIN)) {
+        Serial.println("initialization failed!");
+        sdCardConnected = false;
+    }
+    Serial.println("initialization done.");
+    sdCardConnected = true;
+        deleteFile(SD, "/data.txt");
+        // open a new file and immediately close it:
+        File file = SD.open("/data.txt");
+        if (!file) {
+            Serial.println("File doens't exist");
+            Serial.println("Creating file...");
+            writeFile(SD, "/data.txt", "Temperature, Pressure, height, aX, aY, aZ, aSqrt, gX, gY, gZ, battery percentage\r\n");
+        } else {
+            Serial.println("File already exists");
+        }
+        file.close();
+
+    // MPU9250_asukiaaa RUN
+    mySensor.beginAccel();
+    mySensor.beginGyro();
+
+    // BMP280 RUN
+    bmp.begin();
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                    Adafruit_BMP280::SAMPLING_X2,
+                    Adafruit_BMP280::SAMPLING_X16,
+                    Adafruit_BMP280::FILTER_X16,
+                    Adafruit_BMP280::STANDBY_MS_500);
+
+    // BLE CONFIGURATION
+    /* Create the BLE Server */
+    BLEDevice::init("ROCKET PUT"); // BLE DEV NAME
+    BLEServer *MyServer = BLEDevice::createServer();  //Create the BLE Server
+    MyServer->setCallbacks(new ServerCallbacks());  // Set the function that handles server callbacks
+    BLEService *customService = MyServer->createService(serviceID); // Create the BLE Service
+    customService->addCharacteristic(&customCharacteristic);  // Create a BLE Characteristic
+    customCharacteristic.setCallbacks(new MyCharacteristicCallbacks());
+    MyServer->getAdvertising()->addServiceUUID(serviceID);  // Configure Advertising
+    customService->start(); // Start the service
+    MyServer->getAdvertising()->start();  // Start the server/advertising
+}
+
+void loop() {
+    batt = battery.getBatteryChargeLevel(true);
+    if (mySensor.accelUpdate() == 0) {
+        aX = mySensor.accelX();
+        aY = mySensor.accelY();
+        aZ = mySensor.accelZ();
+        aSqrt = mySensor.accelSqrt();
+    } else {
+        Serial.println("Cannod read accel values");
+    }
+
+    if (mySensor.gyroUpdate() == 0) {
+        gX = mySensor.gyroX();
+        gY = mySensor.gyroY();
+        gZ = mySensor.gyroZ();
+    } else {
+        Serial.println("Cannot read gyro values");
+    }
+
+    if (bmp.begin() == 1) {
+        temp = bmp.readTemperature();
+        press = bmp.readPressure() / 100;
+        latt = bmp.readAltitude(998); //<-- Put here your Sea Level Pressure (hPa)
+
+    } else {
+        Serial.println("Cannot read BMP280 values");
+    }
+    //SENDING DATA VIA BLE
+
+    if (deviceConnected) {
+        char s[1024];
+        snprintf(s, sizeof(s),
+                 "{\"temp\": %f, \"pressure\": %f, \"altitude\": %f, \"aX\": %f, \"aY\": %f, \"aZ\": %f, \"aSqrt\": %f, \"gX\": %f, \"gY\": %f, \"gZ\": %f, \"battery\": %f}",
+                 temp, press, latt, aX, aY, aZ, aSqrt, gX, gY, gZ, batt);
+        customCharacteristic.setValue(s);
+        customCharacteristic.notify();
+        delay(1000);
+    }
+
+    if (sdCardConnected) {
+        String message =
+                String(temp) + " , " + String(press) + " , " + String(latt) + " , " + String(aX) + " , " + String(aY) +
+                " , " + String(aZ) + " , " + String(aSqrt) + " , " + String(gX) + " , " + String(gY) + " , " + String(gZ) + " , " + String(batt);
+        myFile = SD.open("/data.txt", FILE_APPEND);
+        if (!myFile) {
+            Serial.println("Failed to open file for appending");
+            return;
+        }
+        if (myFile.println(message)) {
+            Serial.println("Data appended");
+        } else {
+            Serial.println("Append failed");
+        }
+        myFile.close();
+        delay(1000);
+    }
 }
