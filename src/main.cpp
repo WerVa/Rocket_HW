@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <BLEDevice.h>
-#include <BLEUtils.h>
 #include <BLEServer.h>
+#include <BLE2902.h>
 #include <MPU9250_asukiaaa.h>
 #include <Adafruit_BMP280.h>
 #include <SPI.h>
@@ -15,11 +15,23 @@
 // I2C DEFINE
 #define SDA_PIN 23
 #define SCL_PIN 19
+
 // SPI DEFINE SD CARD
 #define MISO_PIN 27
 #define MOSI_PIN 25
 #define CS_PIN 5
 #define SCK_PIN 18
+
+// BATTERY OVERRIDING and BMP280
+#ifdef DEFAULT_PIN
+#undef DEFAULT_PIN
+#define DEFAULT_PIN 36
+#endif
+
+#ifdef DEFAULT_CONVERSION_FACTOR
+#undef DEFAULT_CONVERSION_FACTOR
+#define DEFAULT_CONVERSION_FACTOR 1.832
+#endif
 
 //BLE DEFINE
 #define serviceID BLEUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
@@ -29,6 +41,7 @@ BLECharacteristic customCharacteristic(
         BLECharacteristic::PROPERTY_WRITE |
         BLECharacteristic::PROPERTY_NOTIFY
 );
+
 bool deviceConnected = false;
 bool sdCardConnected = false;
 //SDCARD
@@ -41,8 +54,8 @@ float aX, aY, aZ, aSqrt, gX, gY, gZ, mDirection, mX, mY, mZ, temp, press, latt, 
 //I2C device found at address 0x76 - bmp280
 Adafruit_BMP280 bmp;
 
-//Build-in Hall sensor
 char value[1024] = "Default";
+float firstPress = 0;
 
 //Sending Data
 class ServerCallbacks : public BLEServerCallbacks {
@@ -121,29 +134,31 @@ void setup() {
     }
     Serial.println("initialization done.");
     sdCardConnected = true;
-        deleteFile(SD, "/data.txt");
-        // open a new file and immediately close it:
-        File file = SD.open("/data.txt");
-        if (!file) {
-            Serial.println("File doens't exist");
-            Serial.println("Creating file...");
-            writeFile(SD, "/data.txt", "Temperature, Pressure, height, aX, aY, aZ, aSqrt, gX, gY, gZ, battery percentage\r\n");
-        } else {
-            Serial.println("File already exists");
-        }
-        file.close();
+    deleteFile(SD, "/data.txt");
+    // open a new file and immediately close it:
+    File file = SD.open("/data.txt");
+    if (!file) {
+        Serial.println("File doens't exist");
+        Serial.println("Creating file...");
+        writeFile(SD, "/data.txt",
+                  "Time, Temperature, Pressure, height, aX, aY, aZ, aSqrt, gX, gY, gZ, battery percentage\r\n");
+    } else {
+        Serial.println("File already exists");
+    }
+    file.close();
 
     // MPU9250_asukiaaa RUN
     mySensor.beginAccel();
     mySensor.beginGyro();
 
     // BMP280 RUN
-    bmp.begin();
+    bmp.begin(BMP280_ADDRESS_ALT);
     bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
                     Adafruit_BMP280::SAMPLING_X2,
                     Adafruit_BMP280::SAMPLING_X16,
                     Adafruit_BMP280::FILTER_X16,
                     Adafruit_BMP280::STANDBY_MS_500);
+    firstPress = bmp.readPressure() / 100;
 
     // BLE CONFIGURATION
     /* Create the BLE Server */
@@ -152,6 +167,9 @@ void setup() {
     MyServer->setCallbacks(new ServerCallbacks());  // Set the function that handles server callbacks
     BLEService *customService = MyServer->createService(serviceID); // Create the BLE Service
     customService->addCharacteristic(&customCharacteristic);  // Create a BLE Characteristic
+    BLE2902 *basicDescriptor = new BLE2902();
+    basicDescriptor->setNotifications(true);
+    customCharacteristic.addDescriptor(basicDescriptor);
     customCharacteristic.setCallbacks(new MyCharacteristicCallbacks());
     MyServer->getAdvertising()->addServiceUUID(serviceID);  // Configure Advertising
     customService->start(); // Start the service
@@ -159,6 +177,7 @@ void setup() {
 }
 
 void loop() {
+    float timestamp = millis() / 1000;
     batt = battery.getBatteryChargeLevel(true);
     if (mySensor.accelUpdate() == 0) {
         aX = mySensor.accelX();
@@ -180,7 +199,7 @@ void loop() {
     if (bmp.begin() == 1) {
         temp = bmp.readTemperature();
         press = bmp.readPressure() / 100;
-        latt = bmp.readAltitude(998); //<-- Put here your Sea Level Pressure (hPa)
+        latt = bmp.readAltitude(firstPress); //<-- Put here your Sea Level Pressure (hPa)
 
     } else {
         Serial.println("Cannot read BMP280 values");
@@ -190,8 +209,8 @@ void loop() {
     if (deviceConnected) {
         char s[1024];
         snprintf(s, sizeof(s),
-                 "{\"temp\": %f, \"pressure\": %f, \"altitude\": %f, \"aX\": %f, \"aY\": %f, \"aZ\": %f, \"aSqrt\": %f, \"gX\": %f, \"gY\": %f, \"gZ\": %f, \"battery\": %f}",
-                 temp, press, latt, aX, aY, aZ, aSqrt, gX, gY, gZ, batt);
+                 "{\"time\": %f, \"temp\": %f, \"pressure\": %f, \"altitude\": %f, \"aX\": %f, \"aY\": %f, \"aZ\": %f, \"aSqrt\": %f, \"gX\": %f, \"gY\": %f, \"gZ\": %f, \"battery\": %f}",
+                 timestamp, temp, press, latt, aX, aY, aZ, aSqrt, gX, gY, gZ, batt);
         customCharacteristic.setValue(s);
         customCharacteristic.notify();
         delay(1000);
@@ -199,8 +218,10 @@ void loop() {
 
     if (sdCardConnected) {
         String message =
-                String(temp) + " , " + String(press) + " , " + String(latt) + " , " + String(aX) + " , " + String(aY) +
-                " , " + String(aZ) + " , " + String(aSqrt) + " , " + String(gX) + " , " + String(gY) + " , " + String(gZ) + " , " + String(batt);
+                String(timestamp) + " , " + String(temp) + " , " + String(press) + " , " + String(latt) + " , " +
+                String(aX) + " , " + String(aY) +
+                " , " + String(aZ) + " , " + String(aSqrt) + " , " + String(gX) + " , " + String(gY) + " , " +
+                String(gZ) + " , " + String(batt);
         myFile = SD.open("/data.txt", FILE_APPEND);
         if (!myFile) {
             Serial.println("Failed to open file for appending");
