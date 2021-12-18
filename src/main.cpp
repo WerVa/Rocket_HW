@@ -33,6 +33,7 @@
 #define DEFAULT_CONVERSION_FACTOR 1.832
 #endif
 
+
 //BLE DEFINE
 #define serviceID BLEUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
 BLECharacteristic customCharacteristic(
@@ -152,7 +153,7 @@ void setup() {
     mySensor.beginGyro();
 
     // BMP280 RUN
-    bmp.begin(BMP280_ADDRESS_ALT);
+    bmp.begin(0x76,0x58);
     bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
                     Adafruit_BMP280::SAMPLING_X2,
                     Adafruit_BMP280::SAMPLING_X16,
@@ -196,7 +197,7 @@ void loop() {
         Serial.println("Cannot read gyro values");
     }
 
-    if (bmp.begin() == 1) {
+    if (bmp.begin(0x76) == 1) {
         temp = bmp.readTemperature();
         press = bmp.readPressure() / 100;
         latt = bmp.readAltitude(firstPress); //<-- Put here your Sea Level Pressure (hPa)
