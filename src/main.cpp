@@ -8,6 +8,8 @@
 #include <SD.h>
 #include <FS.h>
 #include <Battery18650Stats.h>
+#include <TinyGPS++.h>
+#include <HardwareSerial.h>
 
 // Battery DEFINE
 #define ADC_PIN 36
@@ -33,6 +35,12 @@
 #define DEFAULT_CONVERSION_FACTOR 1.832
 #endif
 
+// GPS DEFINE
+TinyGPSPlus gps;
+HardwareSerial gps_serial(1);
+double GPSLat, GPSLng, GPSAlt, GPSSpeed, GPSCourse;
+uint32_t Date, Time, GPSSatCount;
+char GPSErr[] = "Not Connected";
 
 //BLE DEFINE
 #define serviceID BLEUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
@@ -57,6 +65,7 @@ Adafruit_BMP280 bmp;
 
 char value[1024] = "Default";
 float firstPress = 0;
+
 
 //Sending Data
 class ServerCallbacks : public BLEServerCallbacks {
@@ -110,9 +119,67 @@ void deleteFile(fs::FS &fs, const char *path) {
     Serial.printf("Deleting file: %s\n", path);
     if (fs.remove(path)) {
         Serial.println("File deleted");
-    } else {
+    }
+    else {
         Serial.println("Delete failed");
     }
+}
+void displayInfo()
+{
+    GPSLat = gps.location.lat(), GPSLng = gps.location.lng(), GPSAlt = gps.altitude.meters(), GPSSpeed = gps.speed.mps(), GPSCourse = gps.course.deg();
+    Date = gps.date.value(),Time = gps.time.value(), GPSSatCount = gps.satellites.value();
+
+    Serial.print(F("GPS Sat Count: "));
+    Serial.print(GPSSatCount);
+    Serial.print(F(" Location: "));
+    if (gps.location.isValid()){
+        Serial.print(GPSLat, 6);
+        Serial.print(F(","));
+        Serial.print(GPSLng, 6);
+    }
+    else{
+        Serial.print(GPSErr);
+    }
+
+    Serial.print(F("  Altitude: "));
+    if (gps.altitude.isValid()){
+        Serial.print(GPSAlt);
+    }
+    else{
+        Serial.print(GPSErr);
+    }
+    Serial.print(F("  Course: "));
+    if (gps.course.isValid()){
+        Serial.print(GPSCourse);
+    }
+    else{
+        Serial.print(GPSErr);
+    }
+    Serial.print(F("  Speed: "));
+    if (gps.speed.isValid()){
+        Serial.print(GPSSpeed);
+    }
+    else{
+        Serial.print(GPSErr);
+    }
+    Serial.print(F("  Date: "));
+    if (gps.date.isValid())
+    {
+        Serial.print(Date);
+    }
+    else
+    {
+        Serial.print(GPSErr);
+    }
+
+    Serial.print(F(" Time: "));
+    if (gps.time.isValid()){
+       Serial.print(Time);
+    }
+    else{
+        Serial.print(GPSErr);
+    }
+    Serial.println();
 }
 
 void setup() {
@@ -120,8 +187,10 @@ void setup() {
     pinMode(22, OUTPUT);
     digitalWrite(22, LOW);
 
-    //Serial RUN for TESTING
+    //Serial and GPS
     Serial.begin(115200);
+    gps_serial.begin(9600, SERIAL_8N1, 13, 12);
+
 
     //I2C RUN
     Wire.begin(SDA_PIN, SCL_PIN);
@@ -132,9 +201,10 @@ void setup() {
     if (!SD.begin(CS_PIN)) {
         Serial.println("initialization failed!");
         sdCardConnected = false;
+    } else {
+        Serial.println("initialization done.");
+        sdCardConnected = true;
     }
-    Serial.println("initialization done.");
-    sdCardConnected = true;
     deleteFile(SD, "/data.txt");
     // open a new file and immediately close it:
     File file = SD.open("/data.txt");
@@ -142,7 +212,7 @@ void setup() {
         Serial.println("File doens't exist");
         Serial.println("Creating file...");
         writeFile(SD, "/data.txt",
-                  "Time, Temperature, Pressure, height, aX, aY, aZ, aSqrt, gX, gY, gZ, battery percentage\r\n");
+                  "Time, Temperature, Pressure, height, aX, aY, aZ, aSqrt, gX, gY, gZ, battery percentage,GPSValue, GPSLat, GPSLng, GPSAlt, GPSCourse, GPSSpeed, GPSDate, GPSTime\r\n");
     } else {
         Serial.println("File already exists");
     }
@@ -210,8 +280,8 @@ void loop() {
     if (deviceConnected) {
         char s[1024];
         snprintf(s, sizeof(s),
-                 "{\"time\": %f, \"temp\": %f, \"pressure\": %f, \"altitude\": %f, \"aX\": %f, \"aY\": %f, \"aZ\": %f, \"aSqrt\": %f, \"gX\": %f, \"gY\": %f, \"gZ\": %f, \"battery\": %f}",
-                 timestamp, temp, press, latt, aX, aY, aZ, aSqrt, gX, gY, gZ, batt);
+                 "{\"time\": %f, \"temp\": %f, \"pressure\": %f, \"altitude\": %f, \"aX\": %f, \"aY\": %f, \"aZ\": %f, \"aSqrt\": %f, \"gX\": %f, \"gY\": %f, \"gZ\": %f, \"battery\": %f, \"GPSSatCount\": %u, \"GPSLat\": %f, \"GPSLng\": %f, \"GPSAlt\": %f, \"GPSCourse\": %f, \"GPSSpeed\": %f, \"GPSDate\": %u, \"GPSTime\": %u}",
+                 timestamp, temp, press, latt, aX, aY, aZ, aSqrt, gX, gY, gZ, batt, GPSSatCount, GPSLat, GPSLng, GPSAlt, GPSCourse, GPSSpeed, Date, Time);
         customCharacteristic.setValue(s);
         customCharacteristic.notify();
         delay(1000);
@@ -222,18 +292,27 @@ void loop() {
                 String(timestamp) + " , " + String(temp) + " , " + String(press) + " , " + String(latt) + " , " +
                 String(aX) + " , " + String(aY) +
                 " , " + String(aZ) + " , " + String(aSqrt) + " , " + String(gX) + " , " + String(gY) + " , " +
-                String(gZ) + " , " + String(batt);
+                String(gZ) + " , " + String(batt)  + " , " + String(GPSSatCount) + " , " + String(GPSLat,6) + " , " + String(GPSLng,6) + " , " + String(GPSAlt) + " , " + String(GPSCourse) + " , " + String(GPSSpeed) + " , " + String(Date) + " , " + String(Time);
         myFile = SD.open("/data.txt", FILE_APPEND);
         if (!myFile) {
             Serial.println("Failed to open file for appending");
             return;
         }
         if (myFile.println(message)) {
-            Serial.println("Data appended");
+           // Serial.println("Data appended");
         } else {
             Serial.println("Append failed");
         }
         myFile.close();
         delay(1000);
+    }
+
+    while (gps_serial.available() > 0)
+        if (gps.encode(gps_serial.read()))
+            displayInfo();
+
+    if (millis() > 5000 && gps.charsProcessed() < 10)
+    {
+        Serial.println(F("No GPS detected: check wiring."));
     }
 }
