@@ -39,10 +39,11 @@ TinyGPSPlus gps;
 HardwareSerial gps_serial(1);
 double GPSLat, GPSLng, GPSAlt, GPSSpeed, GPSCourse;
 uint32_t GPSSatCount;
-uint32_t Year, Month, Day, Hour, Minute, Second, CentiSecound;
+uint16_t Year;
+uint8_t Month, Day, Hour, Minute, Second, CentiSecound;
 char GPSErr[] = "Not Connected";
 char DateString [10];
-char TimeString [10];
+char TimeString [15];
 
 //BLE DEFINE
 #define serviceID BLEUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
@@ -167,7 +168,7 @@ void displayInfo()
     Serial.print(F("  Date: "));
     if (gps.date.isValid())
     {
-        sprintf_P(DateString, PSTR("%4d-%02d-%02d"), Year, Month, Day);
+        sprintf_P(DateString, PSTR("%4u-%02u-%02u"), Year, Month, Day);
         Serial.print(DateString);
     }
     else
