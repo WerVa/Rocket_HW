@@ -13,7 +13,6 @@
 
 // Battery DEFINE
 #define ADC_PIN 36
-
 // I2C DEFINE
 #define SDA_PIN 23
 #define SCL_PIN 19
@@ -39,8 +38,11 @@
 TinyGPSPlus gps;
 HardwareSerial gps_serial(1);
 double GPSLat, GPSLng, GPSAlt, GPSSpeed, GPSCourse;
-uint32_t Date, Time, GPSSatCount;
+uint32_t GPSSatCount;
+uint32_t Year, Month, Day, Hour, Minute, Second, CentiSecound;
 char GPSErr[] = "Not Connected";
+char DateString [10];
+char TimeString [10];
 
 //BLE DEFINE
 #define serviceID BLEUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
@@ -127,7 +129,7 @@ void deleteFile(fs::FS &fs, const char *path) {
 void displayInfo()
 {
     GPSLat = gps.location.lat(), GPSLng = gps.location.lng(), GPSAlt = gps.altitude.meters(), GPSSpeed = gps.speed.mps(), GPSCourse = gps.course.deg();
-    Date = gps.date.value(),Time = gps.time.value(), GPSSatCount = gps.satellites.value();
+    GPSSatCount = gps.satellites.value(), Year = gps.date.year(), Month = gps.date.month(), Day = gps.date.day(), Hour = gps.time.hour()+1, Minute = gps.time.minute(), Second = gps.time.second(), CentiSecound = gps.time.centisecond();
 
     Serial.print(F("GPS Sat Count: "));
     Serial.print(GPSSatCount);
@@ -165,7 +167,8 @@ void displayInfo()
     Serial.print(F("  Date: "));
     if (gps.date.isValid())
     {
-        Serial.print(Date);
+        sprintf_P(DateString, PSTR("%4d-%02d-%02d"), Year, Month, Day);
+        Serial.print(DateString);
     }
     else
     {
@@ -174,7 +177,8 @@ void displayInfo()
 
     Serial.print(F(" Time: "));
     if (gps.time.isValid()){
-       Serial.print(Time);
+        sprintf_P(TimeString, PSTR("%02u:%02u:%02u:%03u"), Hour, Minute, Second, CentiSecound);
+        Serial.print(TimeString);
     }
     else{
         Serial.print(GPSErr);
@@ -280,8 +284,8 @@ void loop() {
     if (deviceConnected) {
         char s[1024];
         snprintf(s, sizeof(s),
-                 "{\"time\": %f, \"temp\": %f, \"pressure\": %f, \"altitude\": %f, \"aX\": %f, \"aY\": %f, \"aZ\": %f, \"aSqrt\": %f, \"gX\": %f, \"gY\": %f, \"gZ\": %f, \"battery\": %f, \"GPSSatCount\": %u, \"GPSLat\": %f, \"GPSLng\": %f, \"GPSAlt\": %f, \"GPSCourse\": %f, \"GPSSpeed\": %f, \"GPSDate\": %u, \"GPSTime\": %u}",
-                 timestamp, temp, press, latt, aX, aY, aZ, aSqrt, gX, gY, gZ, batt, GPSSatCount, GPSLat, GPSLng, GPSAlt, GPSCourse, GPSSpeed, Date, Time);
+                 "{\"time\": %f, \"temp\": %f, \"pressure\": %f, \"altitude\": %f, \"aX\": %f, \"aY\": %f, \"aZ\": %f, \"aSqrt\": %f, \"gX\": %f, \"gY\": %f, \"gZ\": %f, \"battery\": %f, \"GPSSatCount\": %u, \"GPSLat\": %f, \"GPSLng\": %f, \"GPSAlt\": %f, \"GPSCourse\": %f, \"GPSSpeed\": %f, \"GPSDate\": %s, \"GPSTime\": %s}",
+                 timestamp, temp, press, latt, aX, aY, aZ, aSqrt, gX, gY, gZ, batt, GPSSatCount, GPSLat, GPSLng, GPSAlt, GPSCourse, GPSSpeed, DateString, TimeString );
         customCharacteristic.setValue(s);
         customCharacteristic.notify();
         delay(1000);
@@ -292,7 +296,7 @@ void loop() {
                 String(timestamp) + " , " + String(temp) + " , " + String(press) + " , " + String(latt) + " , " +
                 String(aX) + " , " + String(aY) +
                 " , " + String(aZ) + " , " + String(aSqrt) + " , " + String(gX) + " , " + String(gY) + " , " +
-                String(gZ) + " , " + String(batt)  + " , " + String(GPSSatCount) + " , " + String(GPSLat,6) + " , " + String(GPSLng,6) + " , " + String(GPSAlt) + " , " + String(GPSCourse) + " , " + String(GPSSpeed) + " , " + String(Date) + " , " + String(Time);
+                String(gZ) + " , " + String(batt)  + " , " + String(GPSSatCount) + " , " + String(GPSLat,6) + " , " + String(GPSLng,6) + " , " + String(GPSAlt) + " , " + String(GPSCourse) + " , " + String(GPSSpeed) + " , " + String(DateString) + " , " + String(TimeString);
         myFile = SD.open("/data.txt", FILE_APPEND);
         if (!myFile) {
             Serial.println("Failed to open file for appending");
